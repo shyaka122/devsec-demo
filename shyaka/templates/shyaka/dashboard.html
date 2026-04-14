@@ -1,0 +1,56 @@
+{% extends "shyaka/base.html" %}
+
+{% block title %}Dashboard - Shyaka Auth{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>Welcome, {{ user.first_name|default:user.username }}!</h1>
+    
+    <div class="profile-info">
+        <h3>Quick Profile Summary</h3>
+        
+        <div class="profile-item">
+            <label>Username:</label>
+            <span>{{ user.username }}</span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Email:</label>
+            <span>{{ user.email }}</span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Member Since:</label>
+            <span>{{ user.date_joined|date:"F j, Y" }}</span>
+        </div>
+        
+        {% if user.first_name or user.last_name %}
+        <div class="profile-item">
+            <label>Full Name:</label>
+            <span>{{ user.get_full_name }}</span>
+        </div>
+        {% endif %}
+        
+        {% if profile.bio %}
+        <div class="profile-item">
+            <label>Bio:</label>
+            <span>{{ profile.bio|truncatewords:20 }}</span>
+        </div>
+        {% endif %}
+        
+        <div class="profile-item">
+            <label>Profile Updated:</label>
+            <span>{{ profile.date_updated|date:"F j, Y \a\t H:i" }}</span>
+        </div>
+    </div>
+    
+    <p style="text-align: center; color: #666; margin-bottom: 1.5rem;">
+        You are now logged in and can access protected areas of the application.
+    </p>
+    
+    <div class="actions">
+        <a href="{% url 'shyaka:profile' %}">📝 View & Edit Profile</a>
+        <a href="{% url 'shyaka:change_password' %}">🔑 Change Password</a>
+    </div>
+</div>
+{% endblock %}
