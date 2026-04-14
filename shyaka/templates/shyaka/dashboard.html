@@ -6,12 +6,38 @@
 <div class="card">
     <h1>Welcome, {{ user.first_name|default:user.username }}!</h1>
     
+    {% if is_admin %}
+        <div style="background: #ffe6e6; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; border-left: 4px solid #e74c3c;">
+            <strong>🔑 Admin Access:</strong> You have administrator privileges.
+            <a href="{% url 'shyaka:admin_dashboard' %}" style="margin-left: 1rem; color: #e74c3c; text-decoration: none; font-weight: bold;">Go to Admin Dashboard →</a>
+        </div>
+    {% elif is_staff %}
+        <div style="background: #e3f2fd; padding: 1rem; border-radius: 5px; margin-bottom: 1rem; border-left: 4px solid #2196f3;">
+            <strong>👔 Staff Access:</strong> You have staff privileges and elevated permissions.
+        </div>
+    {% endif %}
+    
     <div class="profile-info">
         <h3>Quick Profile Summary</h3>
         
         <div class="profile-item">
             <label>Username:</label>
             <span>{{ user.username }}</span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Role:</label>
+            <span>
+                <strong>
+                    {% if user_role == 'admin' %}
+                        🔑 Administrator
+                    {% elif user_role == 'staff' %}
+                        👔 Staff
+                    {% else %}
+                        👤 Standard User
+                    {% endif %}
+                </strong>
+            </span>
         </div>
         
         <div class="profile-item">
@@ -51,6 +77,10 @@
     <div class="actions">
         <a href="{% url 'shyaka:profile' %}">📝 View & Edit Profile</a>
         <a href="{% url 'shyaka:change_password' %}">🔑 Change Password</a>
+        {% if is_admin %}
+            <a href="{% url 'shyaka:admin_dashboard' %}">🔧 Admin Panel</a>
+        {% endif %}
     </div>
 </div>
 {% endblock %}
+

@@ -248,6 +248,30 @@
             color: #666;
         }
         
+        .role-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-left: 0.5rem;
+        }
+        
+        .role-badge.admin {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .role-badge.staff {
+            background-color: #f39c12;
+            color: white;
+        }
+        
+        .role-badge.user {
+            background-color: #3498db;
+            color: white;
+        }
+        
         .actions {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -285,9 +309,17 @@
         <div class="nav-brand">🔐 Shyaka Auth</div>
         <div class="nav-links">
             {% if user.is_authenticated %}
-                <span style="color: white;">Welcome, {{ user.username }}!</span>
+                <span style="color: white;">
+                    Welcome, {{ user.username }}!
+                    {% if user_role %}
+                        <span class="role-badge {{ user_role }}">{{ user_role }}</span>
+                    {% endif %}
+                </span>
                 <a href="{% url 'shyaka:dashboard' %}">Dashboard</a>
                 <a href="{% url 'shyaka:profile' %}">Profile</a>
+                {% if is_admin %}
+                    <a href="{% url 'shyaka:admin_dashboard' %}" style="color: #f39c12;">🔧 Admin</a>
+                {% endif %}
                 <a href="{% url 'shyaka:change_password' %}">Change Password</a>
                 <a href="{% url 'shyaka:logout' %}">Logout</a>
             {% else %}

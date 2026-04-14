@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, Group
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_protect
@@ -14,6 +14,13 @@ from .forms import (
     PasswordChangeCustomForm
 )
 from .models import UserProfile
+from .auth_utils import (
+    require_role,
+    require_admin,
+    get_user_role,
+    is_admin,
+    is_staff,
+)
 
 
 @require_http_methods(["GET", "POST"])
@@ -102,11 +109,17 @@ def dashboard(request):
     """
     Authenticated user dashboard.
     Displays user information and profile summary.
+    Role information is available in context for conditional display.
     """
     profile = get_object_or_404(UserProfile, user=request.user)
+    user_role = get_user_role(request.user)
+    
     context = {
         'user': request.user,
         'profile': profile,
+        'user_role': user_role,
+        'is_admin': is_admin(request.user),
+        'is_staff': is_staff(request.user),
     }
     return render(request, 'shyaka/dashboard.html', context)
 
@@ -178,3 +191,103 @@ def change_password(request):
     
     context = {'form': form}
     return render(request, 'shyaka/change_password.html', context)
+
+
+# ============================================================================
+# Administration Views - Restricted to admin users only
+# ============================================================================
+
+@require_admin
+@require_http_methods(["GET"])
+def admin_dashboard(request):
+    """
+    Admin dashboard - Shows system statistics and user management options.
+    Access restricted to admin users only.
+    """
+    total_users = User.objects.count()
+    total_profiles = UserProfile.objects.count()
+    
+    admin_group = Group.objects.get_or_create(name='admin')[0]
+    staff_group = Group.objects.get_or_create(name='staff')[0]
+    
+    admin_count = admin_group.user_set.count()
+    staff_count = staff_group.user_set.count()
+    
+    context = {
+        'total_users': total_users,
+        'total_profiles': total_profiles,
+        'admin_count': admin_count,
+        'staff_count': staff_count,
+        'user_role': get_user_role(request.user),
+    }
+    return render(request, 'shyaka/admin_dashboard.html', context)
+
+
+@require_admin
+@require_http_methods(["GET"])
+def manage_users(request):
+    """
+    User management view - List and manage all users.
+    Access restricted to admin users only.
+    """
+    all_users = User.objects.select_related('profile').all()
+    admin_group = Group.objects.get_or_create(name='admin')[0]
+    staff_group = Group.objects.get_or_create(name='staff')[0]
+    
+    users_data = []
+    for user in all_users:
+        user_groups = list(user.groups.values_list('name', flat=True))
+        users_data.append({
+            'user': user,
+            'role': get_user_role(user),
+            'groups': user_groups,
+        })
+    
+    context = {
+        'users_data': users_data,
+        'admin_group': admin_group,
+        'staff_group': staff_group,
+        'user_role': get_user_role(request.user),
+    }
+    return render(request, 'shyaka/manage_users.html', context)
+
+
+@require_admin
+@require_http_methods(["POST"])
+@csrf_protect
+def assign_user_role(request):
+    """
+    Assign a role to a user - POST only for security.
+    Access restricted to admin users only.
+    """
+    user_id = request.POST.get('user_id')
+    role = request.POST.get('role')
+    
+    if not user_id or not role:
+        messages.error(request, 'Invalid request parameters.')
+        return redirect('shyaka:manage_users')
+    
+    try:
+        user = User.objects.get(id=user_id)
+        valid_roles = ['admin', 'staff', 'user']
+        
+        if role not in valid_roles:
+            messages.error(request, 'Invalid role specified.')
+            return redirect('shyaka:manage_users')
+        
+        # Remove user from all groups
+        user.groups.clear()
+        
+        # Add user to appropriate group if not standard user
+        if role in ['admin', 'staff']:
+            group = Group.objects.get(name=role)
+            user.groups.add(group)
+            messages.success(request, f'User {user.username} assigned to {role} group.')
+        else:
+            messages.success(request, f'User {user.username} set as standard user.')
+        
+        return redirect('shyaka:manage_users')
+    
+    except User.DoesNotExist:
+        messages.error(request, 'User not found.')
+        return redirect('shyaka:manage_users')
