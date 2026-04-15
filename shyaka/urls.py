@@ -17,6 +17,10 @@ urlpatterns = [
     path('profile/', views.profile, name='profile'),
     path('change-password/', views.change_password, name='change_password'),
     
+    # User profile endpoints with IDOR protection
+    path('user/<int:user_id>/profile/', views.view_user_profile, name='view_user_profile'),
+    path('user/<int:user_id>/profile/edit/', views.edit_user_profile, name='edit_user_profile'),
+    
     # Admin-only endpoints (admin users only)
     path('admin/', views.admin_dashboard, name='admin_dashboard'),
     path('admin/users/', views.manage_users, name='manage_users'),

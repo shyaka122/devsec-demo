@@ -169,6 +169,96 @@ def profile(request):
 
 
 @login_required(login_url='shyaka:login')
+@require_http_methods(["GET"])
+def view_user_profile(request, user_id):
+    """
+    View a specific user's profile by ID.
+    IDOR protection: Users can only view their own profile unless they are admin.
+    
+    Security: Object-level access control enforced.
+    - Standard users can only view their own profile
+    - Admins can view any user's profile
+    - Returns 403 Forbidden if unauthorized
+    """
+    # Get the target user's profile
+    target_user = get_object_or_404(User, id=user_id)
+    profile = get_object_or_404(UserProfile, user=target_user)
+    
+    # IDOR Check: Verify object-level access
+    # Allow access if user owns the profile OR is admin
+    if request.user.id != target_user.id and not is_admin(request.user):
+        messages.error(request, 'You do not have permission to view this profile.')
+        return redirect('shyaka:dashboard')
+    
+    context = {
+        'target_user': target_user,
+        'profile': profile,
+        'is_own_profile': request.user.id == target_user.id,
+    }
+    return render(request, 'shyaka/view_user_profile.html', context)
+
+
+@login_required(login_url='shyaka:login')
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def edit_user_profile(request, user_id):
+    """
+    Edit a specific user's profile by ID.
+    IDOR protection: Users can only edit their own profile unless they are admin.
+    
+    Security: Object-level access control enforced.
+    - Standard users can only edit their own profile
+    - Admins can edit any user's profile
+    - Returns 403 Forbidden if unauthorized
+    """
+    # Get the target user's profile
+    target_user = get_object_or_404(User, id=user_id)
+    profile = get_object_or_404(UserProfile, user=target_user)
+    
+    # IDOR Check: Verify object-level access
+    # Allow access if user owns the profile OR is admin
+    if request.user.id != target_user.id and not is_admin(request.user):
+        messages.error(request, 'You do not have permission to edit this profile.')
+        return redirect('shyaka:dashboard')
+    
+    if request.method == 'POST':
+        form = UserProfileForm(
+            request.POST,
+            instance=profile,
+            initial={
+                'first_name': target_user.first_name,
+                'last_name': target_user.last_name,
+                'email': target_user.email,
+            }
+        )
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Profile updated successfully.')
+            return redirect('shyaka:view_user_profile', user_id=user_id)
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"{field}: {error}")
+    else:
+        form = UserProfileForm(
+            instance=profile,
+            initial={
+                'first_name': target_user.first_name,
+                'last_name': target_user.last_name,
+                'email': target_user.email,
+            }
+        )
+    
+    context = {
+        'form': form,
+        'profile': profile,
+        'target_user': target_user,
+        'is_own_profile': request.user.id == target_user.id,
+    }
+    return render(request, 'shyaka/edit_user_profile.html', context)
+
+
+@login_required(login_url='shyaka:login')
 @require_http_methods(["GET", "POST"])
 @csrf_protect
 def change_password(request):
