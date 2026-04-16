@@ -12,6 +12,12 @@ urlpatterns = [
     path('login/', views.login_view, name='login'),
     path('logout/', views.logout_view, name='logout'),
     
+    # Password reset endpoints (public) - secure account recovery workflow
+    path('password-reset/', views.password_reset_request, name='password_reset_request'),
+    path('password-reset/done/', views.password_reset_done, name='password_reset_done'),
+    path('password-reset/<uidb64>/<token>/', views.password_reset_confirm, name='password_reset_confirm'),
+    path('password-reset/complete/', views.password_reset_complete, name='password_reset_complete'),
+    
     # Protected endpoints (authenticated users)
     path('dashboard/', views.dashboard, name='dashboard'),
     path('profile/', views.profile, name='profile'),

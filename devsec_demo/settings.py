@@ -120,3 +120,37 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# ============================================================================
+# Email Configuration
+# ============================================================================
+# For development, use the console backend to print emails to console
+# In production, configure SMTP or use a service like SendGrid, Mailgun, etc.
+
+if DEBUG:
+    # Development: Print emails to console
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+else:
+    # Production: Configure your email backend here
+    # Example: SMTP backend
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+    EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
+
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@shyaka.local')
+
+# ============================================================================
+# Password Reset Configuration
+# ============================================================================
+# Security-critical settings for password reset functionality
+
+# Token expiration time in seconds (default: 1209600 = 2 weeks)
+# This should be SHORT enough for security but LONG enough for users to use
+PASSWORD_RESET_TIMEOUT = int(os.environ.get('PASSWORD_RESET_TIMEOUT', 3600))  # 1 hour for demo
+
+# Default key lifetime in seconds for password reset tokens
+# Django's PasswordResetTokenGenerator uses this to validate tokens
+# The token includes a hash of the user's password, so changing the password invalidates old tokens

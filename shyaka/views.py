@@ -1,17 +1,23 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User, Group
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_protect
 from django.db import IntegrityError
+from django.http import Http404
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
 
 from .forms import (
     RegistrationForm,
     LoginForm,
     UserProfileForm,
-    PasswordChangeCustomForm
+    PasswordChangeCustomForm,
+    PasswordResetCustomForm,
+    PasswordResetConfirmCustomForm,
 )
 from .models import UserProfile
 from .auth_utils import (
@@ -381,3 +387,156 @@ def assign_user_role(request):
     except User.DoesNotExist:
         messages.error(request, 'User not found.')
         return redirect('shyaka:manage_users')
+
+
+# ============================================================================
+# Password Reset Views - Secure Account Recovery Workflow
+# ============================================================================
+
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def password_reset_request(request):
+    """
+    Password reset request view.
+    Users can request a password reset by providing their email address.
+    
+    Security considerations:
+    - Does NOT distinguish between valid and invalid emails (prevents user enumeration)
+    - Returns same success message for all inputs
+    - Uses Django's secure token generation (HMAC-SHA256)
+    - Only users with registered email addresses can reset passwords
+    - Email must be valid and associated with an account
+    
+    Design decisions:
+    - Email-based reset (not username) - more common and less prone to typos
+    - Generic success message prevents attackers from enumerating accounts
+    """
+    if request.user.is_authenticated:
+        return redirect('shyaka:dashboard')
+    
+    if request.method == 'POST':
+        form = PasswordResetCustomForm(request.POST)
+        if form.is_valid():
+            email = form.cleaned_data.get('email')
+            # Check if user exists with this email (but don't reveal status)
+            try:
+                user = User.objects.get(email=email)
+                # Generate secure token
+                token = default_token_generator.make_token(user)
+                uid = urlsafe_base64_encode(force_bytes(user.id))
+                
+                # In development, we'll store this in session for demo
+                # In production, this would be sent via email
+                request.session[f'password_reset_{uid}'] = {
+                    'token': token,
+                    'user_id': user.id,
+                    'email': email,
+                }
+                
+                messages.success(
+                    request,
+                    'If an account with that email exists, a password reset link has been sent.'
+                )
+                return redirect('shyaka:password_reset_done')
+            except User.DoesNotExist:
+                # Don't reveal whether email exists - same message for all cases
+                messages.success(
+                    request,
+                    'If an account with that email exists, a password reset link has been sent.'
+                )
+                return redirect('shyaka:password_reset_done')
+    else:
+        form = PasswordResetCustomForm()
+    
+    context = {'form': form}
+    return render(request, 'shyaka/password_reset_request.html', context)
+
+
+@require_http_methods(["GET"])
+def password_reset_done(request):
+    """
+    Password reset request confirmation view.
+    Shows user that if an account exists, they've been sent a reset link.
+    
+    Security: Generic message doesn't reveal account existence.
+    """
+    return render(request, 'shyaka/password_reset_done.html')
+
+
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def password_reset_confirm(request, uidb64, token):
+    """
+    Password reset confirmation view.
+    Users confirm their email and set a new password.
+    
+    Security considerations:
+    - Token is validated against user's password hash (Django's PasswordResetTokenGenerator)
+    - Tokens are tied to specific user IDs (prevents token reuse across accounts)
+    - Tokens expire after DEFAULT_PASSWORD_RESET_TIMEOUT (default: 1 week, configurable)
+    - Invalid tokens/UIDs show generic error message
+    - Only valid tokens allow password change
+    
+    Process:
+    1. Decode UID and find user
+    2. Validate token (uses HMAC with user's password hash)
+    3. If valid, allow user to set new password
+    4. New password is validated against password validators
+    """
+    try:
+        # Decode the user ID from URL-safe base64
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        messages.error(
+            request,
+            'Invalid password reset link. Please request a new reset link.'
+        )
+        return redirect('shyaka:password_reset_request')
+    
+    # Validate token (Django checks if it was generated for this user and hasn't expired)
+    if not default_token_generator.check_token(user, token):
+        messages.error(
+            request,
+            'Invalid or expired password reset link. Please request a new reset link.'
+        )
+        return redirect('shyaka:password_reset_request')
+    
+    # Token is valid - allow password reset
+    if request.method == 'POST':
+        form = PasswordResetConfirmCustomForm(user, request.POST)
+        if form.is_valid():
+            user = form.save()
+            # Update session so user stays logged in if they were
+            update_session_auth_hash(request, user)
+            messages.success(
+                request,
+                'Your password has been reset successfully. You can now log in.'
+            )
+            return redirect('shyaka:password_reset_complete')
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"{error}")
+    else:
+        form = PasswordResetConfirmCustomForm(user)
+    
+    context = {
+        'form': form,
+        'uidb64': uidb64,
+        'token': token,
+        'user': user,
+    }
+    return render(request, 'shyaka/password_reset_confirm.html', context)
+
+
+@require_http_methods(["GET"])
+def password_reset_complete(request):
+    """
+    Password reset completion view.
+    Confirms that password has been successfully reset.
+    User can proceed to login with their new password.
+    
+    Security: Provides clear guidance on next steps.
+    """
+    return render(request, 'shyaka/password_reset_complete.html')

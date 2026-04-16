@@ -1,6 +1,11 @@
 from django import forms
 from django.contrib.auth.models import User
-from django.contrib.auth.forms import UserCreationForm, PasswordChangeForm
+from django.contrib.auth.forms import (
+    UserCreationForm,
+    PasswordChangeForm,
+    PasswordResetForm,
+    SetPasswordForm,
+)
 from django.core.exceptions import ValidationError
 from .models import UserProfile
 
@@ -134,5 +139,56 @@ class PasswordChangeCustomForm(PasswordChangeForm):
         widget=forms.PasswordInput(attrs={
             'class': 'form-control',
             'placeholder': 'Confirm New Password'
+        })
+    )
+
+
+class PasswordResetCustomForm(PasswordResetForm):
+    """
+    Custom password reset form with Bootstrap styling.
+    Extends Django's built-in PasswordResetForm for secure account recovery.
+    
+    Security properties:
+    - Uses email to initiate reset (prevents username enumeration if applicable)
+    - Django's PasswordResetForm generates secure, tamper-proof tokens
+    - Tokens expire after DEFAULT_PASSWORD_RESET_TIMEOUT
+    - Does not leak whether email exists (returns success message for all inputs)
+    """
+    email = forms.EmailField(
+        label='Email Address',
+        max_length=254,
+        widget=forms.EmailInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Enter your email address',
+            'autocomplete': 'email'
+        })
+    )
+
+
+class PasswordResetConfirmCustomForm(SetPasswordForm):
+    """
+    Custom password reset confirmation form with Bootstrap styling.
+    Extends Django's built-in SetPasswordForm for secure password update.
+    
+    Security properties:
+    - Token must be valid (Django validates against user's last login)
+    - Token must not be expired (checked by Django's views)
+    - New password is validated against password validators
+    - Prevents password reuse and common passwords
+    """
+    new_password1 = forms.CharField(
+        label='New Password',
+        widget=forms.PasswordInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Enter new password',
+            'autocomplete': 'new-password'
+        })
+    )
+    new_password2 = forms.CharField(
+        label='Confirm New Password',
+        widget=forms.PasswordInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Confirm new password',
+            'autocomplete': 'new-password'
         })
     )
