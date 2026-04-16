@@ -206,10 +206,13 @@ def dashboard(request):
 
 @login_required(login_url='shyaka:login')
 @require_http_methods(["GET", "POST"])
+@csrf_protect
 def profile(request):
     """
     User profile view.
     Allows users to view and edit their profile information.
+    
+    Security: CSRF protection required for POST requests that modify user profile.
     """
     profile = get_object_or_404(UserProfile, user=request.user)
     
