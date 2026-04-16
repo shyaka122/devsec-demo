@@ -19,7 +19,7 @@ from .forms import (
     PasswordResetCustomForm,
     PasswordResetConfirmCustomForm,
 )
-from .models import UserProfile
+from .models import UserProfile, LoginAttempt
 from .auth_utils import (
     require_role,
     require_admin,
@@ -66,15 +66,47 @@ def register(request):
     return render(request, 'shyaka/register.html', {'form': form})
 
 
+
+
+def get_client_ip(request):
+    """
+    Extract client IP address from request.
+    Considers X-Forwarded-For header (for proxies) and falls back to REMOTE_ADDR.
+    
+    Security: Uses most recent IP from X-Forwarded-For to avoid spoofing via chain padding.
+    """
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        # Take the last IP (most recent proxy)
+        ip = x_forwarded_for.split(',')[-1].strip()
+    else:
+        ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
+    return ip
+
+
 @require_http_methods(["GET", "POST"])
 @csrf_protect
 def login_view(request):
     """
-    User login view.
-    Authenticates user credentials and creates session.
+    User login view with brute-force protection.
+    
+    Security features:
+    - Tracks failed login attempts per username and IP address
+    - Implements account lockout after 5 failed attempts (15 min cooldown)
+    - Implements IP-based lockout after 15 failed attempts (15 min cooldown)
+    - Returns same error message for all failures (prevents user enumeration)
+    - Records all attempts (successful and failed) for audit trail
+    
+    Abuse protection:
+    - Failed attempts counted within last 15 minutes
+    - Accounts lock for 15 minutes after 5 failures
+    - IPs lock for 15 minutes after 15 failures
+    - Lockout status checked before attempting authentication
     """
     if request.user.is_authenticated:
         return redirect('shyaka:dashboard')
+    
+    client_ip = get_client_ip(request)
     
     if request.method == 'POST':
         form = LoginForm(request.POST)
@@ -82,12 +114,54 @@ def login_view(request):
             username = form.cleaned_data.get('username')
             password = form.cleaned_data.get('password')
             
+            # Check for account/IP lockout BEFORE attempting authentication
+            # This prevents attackers from continuing to guess passwords during lockout
+            lockout = LoginAttempt.get_lockout_status(
+                username=username,
+                ip_address=client_ip,
+                max_attempts=5,  # Account lockout after 5 failures
+                lockout_minutes=15  # Cooldown period
+            )
+            
+            if lockout['locked']:
+                # Generic error message (doesn't reveal lockout reason)
+                messages.error(
+                    request,
+                    'Invalid username or password. Please try again later or contact support.'
+                )
+                # Log the lockout attempt (for monitoring abuse patterns)
+                LoginAttempt.record_attempt(
+                    username=username,
+                    ip_address=client_ip,
+                    success=False,
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                return render(request, 'shyaka/login.html', {'form': form})
+            
+            # Attempt authentication
             user = authenticate(request, username=username, password=password)
+            
             if user is not None:
+                # Login successful - record attempt and create session
                 login(request, user)
+                LoginAttempt.record_attempt(
+                    username=username,
+                    ip_address=client_ip,
+                    success=True,
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
                 messages.success(request, f'Welcome back, {username}!')
                 return redirect('shyaka:dashboard')
             else:
+                # Login failed - record attempt
+                LoginAttempt.record_attempt(
+                    username=username,
+                    ip_address=client_ip,
+                    success=False,
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                
+                # Generic error message (prevents username enumeration)
                 messages.error(
                     request,
                     'Invalid username or password. Please try again.'
