@@ -100,3 +100,67 @@ def require_staff(view_func):
         return view_func(request, *args, **kwargs)
     
     return wrapper
+
+
+def is_safe_redirect_url(url, request=None, allowed_relative_hosts=None):
+    """
+    Validate that a redirect URL is safe and not an open redirect attack.
+    
+    Security checks:
+    - Rejects absolute URLs with external hosts (prevents redirect to attacker's site)
+    - Only allows relative URLs (e.g., /profile/, /dashboard/)
+    - Prevents protocol-relative URLs (e.g., //evil.com/malware)
+    - Allows internal HTTPS/HTTP URLs if explicit host is whitelisted
+    
+    Args:
+        url (str): The URL to validate
+        request (HttpRequest, optional): Current request object (for getting current host)
+        allowed_relative_hosts (list, optional): List of allowed hosts for absolute URLs
+    
+    Returns:
+        bool: True if URL is safe to redirect to, False otherwise
+    
+    Examples:
+        is_safe_redirect_url('/dashboard/')  # True - relative URL
+        is_safe_redirect_url('//evil.com')   # False - protocol-relative
+        is_safe_redirect_url('http://evil.com')  # False - external host
+        is_safe_redirect_url('http://localhost/profile/')  # May be True (if whitelisted)
+    """
+    if not url:
+        return False
+    
+    # URL should start with / for relative URLs or be valid scheme+host for same-origin
+    # Reject protocol-relative URLs (//example.com/path)
+    if url.startswith('//'):
+        return False
+    
+    # Check for absolute URLs with external hosts
+    if url.startswith('http://') or url.startswith('https://'):
+        # For absolute URLs, we need to validate the host
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        parsed_host = parsed.netloc
+        
+        # If request provided, compare with current host
+        if request:
+            current_host = request.get_host()
+            if parsed_host != current_host:
+                return False  # Different host
+        
+        # If allowed hosts provided, check against whitelist
+        if allowed_relative_hosts:
+            if parsed_host not in allowed_relative_hosts:
+                return False
+        
+        # If no request and no whitelist, reject absolute URLs (be conservative)
+        if not request and not allowed_relative_hosts:
+            return False
+    
+    # Relative URLs starting with / are safe
+    # (They'll be served from same origin)
+    if url.startswith('/'):
+        return True
+    
+    # Allow named URL references (for link generation)
+    # But reject anything else
+    return False

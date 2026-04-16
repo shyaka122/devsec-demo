@@ -26,6 +26,7 @@ from .auth_utils import (
     get_user_role,
     is_admin,
     is_staff,
+    is_safe_redirect_url,
 )
 
 
@@ -35,9 +36,14 @@ def register(request):
     """
     User registration view.
     Handles both GET (display form) and POST (process registration).
+    
+    Security: Validates redirect target to prevent open redirect attacks.
     """
     if request.user.is_authenticated:
         return redirect('shyaka:dashboard')
+    
+    # Get optional next parameter for post-registration redirect (open redirect protection)
+    next_url = request.GET.get('next') or request.POST.get('next')
     
     if request.method == 'POST':
         form = RegistrationForm(request.POST)
@@ -50,6 +56,9 @@ def register(request):
                     request,
                     'Registration successful! Please log in.'
                 )
+                # Safely redirect to login or next URL if provided
+                if next_url and is_safe_redirect_url(next_url, request):
+                    return redirect(f'shyaka:login?next={next_url}')
                 return redirect('shyaka:login')
             except IntegrityError:
                 messages.error(
@@ -63,7 +72,12 @@ def register(request):
     else:
         form = RegistrationForm()
     
-    return render(request, 'shyaka/register.html', {'form': form})
+    # Pass next parameter to template if it's safe
+    context = {'form': form}
+    if next_url and is_safe_redirect_url(next_url, request):
+        context['next'] = next_url
+    
+    return render(request, 'shyaka/register.html', context)
 
 
 
@@ -96,15 +110,24 @@ def login_view(request):
     - Implements IP-based lockout after 15 failed attempts (15 min cooldown)
     - Returns same error message for all failures (prevents user enumeration)
     - Records all attempts (successful and failed) for audit trail
+    - Validates redirect target to prevent open redirect attacks
     
     Abuse protection:
     - Failed attempts counted within last 15 minutes
     - Accounts lock for 15 minutes after 5 failures
     - IPs lock for 15 minutes after 15 failures
     - Lockout status checked before attempting authentication
+    
+    Open Redirect Protection:
+    - Accepts optional 'next' parameter for post-login redirect
+    - Validates redirect target against whitelist (only relative URLs allowed)
+    - Falls back to dashboard if redirect is invalid/unsafe
     """
     if request.user.is_authenticated:
         return redirect('shyaka:dashboard')
+    
+    # Get next parameter for post-login redirect (open redirect protection)
+    next_url = request.GET.get('next') or request.POST.get('next')
     
     client_ip = get_client_ip(request)
     
@@ -151,6 +174,10 @@ def login_view(request):
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )
                 messages.success(request, f'Welcome back, {username}!')
+                
+                # Safely redirect to next URL if provided and valid
+                if next_url and is_safe_redirect_url(next_url, request):
+                    return redirect(next_url)
                 return redirect('shyaka:dashboard')
             else:
                 # Login failed - record attempt
@@ -169,7 +196,12 @@ def login_view(request):
     else:
         form = LoginForm()
     
-    return render(request, 'shyaka/login.html', {'form': form})
+    # Pass next parameter to template if it's safe
+    context = {'form': form}
+    if next_url and is_safe_redirect_url(next_url, request):
+        context['next'] = next_url
+    
+    return render(request, 'shyaka/login.html', context)
 
 
 @login_required(login_url='shyaka:login')
@@ -178,9 +210,18 @@ def logout_view(request):
     """
     User logout view.
     Destroys user session and redirects to homepage.
+    
+    Security: Validates redirect target to prevent open redirect attacks.
     """
+    # Get optional next parameter for post-logout redirect (open redirect protection)
+    next_url = request.GET.get('next') or request.POST.get('next')
+    
     logout(request)
     messages.success(request, 'You have been logged out successfully.')
+    
+    # Safely redirect to next URL if provided and valid
+    if next_url and is_safe_redirect_url(next_url, request):
+        return redirect(next_url)
     return redirect('shyaka:login')
 
 
@@ -554,13 +595,18 @@ def password_reset_confirm(request, uidb64, token):
     - Tokens expire after DEFAULT_PASSWORD_RESET_TIMEOUT (default: 1 week, configurable)
     - Invalid tokens/UIDs show generic error message
     - Only valid tokens allow password change
+    - Validates redirect target to prevent open redirect attacks
     
     Process:
     1. Decode UID and find user
     2. Validate token (uses HMAC with user's password hash)
     3. If valid, allow user to set new password
     4. New password is validated against password validators
+    5. Redirect to next URL if provided and safe
     """
+    # Get optional next parameter for post-reset redirect (open redirect protection)
+    next_url = request.GET.get('next') or request.POST.get('next')
+    
     try:
         # Decode the user ID from URL-safe base64
         uid = force_str(urlsafe_base64_decode(uidb64))
@@ -591,6 +637,9 @@ def password_reset_confirm(request, uidb64, token):
                 request,
                 'Your password has been reset successfully. You can now log in.'
             )
+            # Safely redirect to next URL if provided and valid
+            if next_url and is_safe_redirect_url(next_url, request):
+                return redirect(next_url)
             return redirect('shyaka:password_reset_complete')
         else:
             for field, errors in form.errors.items():
@@ -599,12 +648,16 @@ def password_reset_confirm(request, uidb64, token):
     else:
         form = PasswordResetConfirmCustomForm(user)
     
+    # Pass next parameter to template if it's safe
     context = {
         'form': form,
         'uidb64': uidb64,
         'token': token,
         'user': user,
     }
+    if next_url and is_safe_redirect_url(next_url, request):
+        context['next'] = next_url
+    
     return render(request, 'shyaka/password_reset_confirm.html', context)
 
 
