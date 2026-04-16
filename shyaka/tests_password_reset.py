@@ -82,13 +82,15 @@ class PasswordResetRequestTestCase(TestCase):
         self.assertEqual(response1.url, response2.url)
     
     def test_authenticated_user_can_request_reset(self):
-        """Test that authenticated users can request password reset."""
+        """Test that authenticated users are redirected to dashboard."""
         # Login user
         self.client.login(username='testuser', password='OldPassword123!')
         
-        # Access reset page
+        # Access reset page - should redirect because they're already logged in
+        # Logged-in users should use "change password" instead
         response = self.client.get(self.reset_request_url)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 302)  # Redirected
+        self.assertIn('dashboard', response.url)
     
     def test_reset_done_page_displays(self):
         """Test that reset done page displays confirmation message."""

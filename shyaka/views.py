@@ -411,6 +411,7 @@ def password_reset_request(request):
     - Email-based reset (not username) - more common and less prone to typos
     - Generic success message prevents attackers from enumerating accounts
     """
+    # Authenticated users should use "change password" instead
     if request.user.is_authenticated:
         return redirect('shyaka:dashboard')
     
