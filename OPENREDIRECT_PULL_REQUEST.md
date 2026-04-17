@@ -6,7 +6,7 @@ This PR implements comprehensive protection against open redirect vulnerabilitie
 
 ## Related Issue
 
-Closes #<open-redirect-assignment>
+Closes #38
 
 **Assignment**: Students will analyze redirect safety in authentication flows and prevent open redirect behavior.
 
