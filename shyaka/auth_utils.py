@@ -106,16 +106,19 @@ def is_safe_redirect_url(url, request=None, allowed_relative_hosts=None):
     """
     Validate that a redirect URL is safe and not an open redirect attack.
     
+    Uses Django's url_has_allowed_host_and_scheme utility to validate redirect targets.
+    
     Security checks:
+    - Rejects protocol-relative URLs (//evil.com/malware) - can bypass HTTPS
     - Rejects absolute URLs with external hosts (prevents redirect to attacker's site)
-    - Only allows relative URLs (e.g., /profile/, /dashboard/)
-    - Prevents protocol-relative URLs (e.g., //evil.com/malware)
-    - Allows internal HTTPS/HTTP URLs if explicit host is whitelisted
+    - Rejects non-HTTP(S) schemes like javascript:, data:, etc.
+    - Only allows relative URLs (e.g., /profile/, /dashboard/) by default
+    - Validates against ALLOWED_HOSTS from Django settings for absolute URLs
     
     Args:
-        url (str): The URL to validate
-        request (HttpRequest, optional): Current request object (for getting current host)
-        allowed_relative_hosts (list, optional): List of allowed hosts for absolute URLs
+        url (str): The URL to validate for redirect safety
+        request (HttpRequest, optional): Current request object (for host validation)
+        allowed_relative_hosts (list, optional): Additional hosts to allow (legacy param)
     
     Returns:
         bool: True if URL is safe to redirect to, False otherwise
@@ -124,43 +127,51 @@ def is_safe_redirect_url(url, request=None, allowed_relative_hosts=None):
         is_safe_redirect_url('/dashboard/')  # True - relative URL
         is_safe_redirect_url('//evil.com')   # False - protocol-relative
         is_safe_redirect_url('http://evil.com')  # False - external host
-        is_safe_redirect_url('http://localhost/profile/')  # May be True (if whitelisted)
+        is_safe_redirect_url('javascript:alert(1)')  # False - invalid scheme
+        is_safe_redirect_url('data:text/html,<script>')  # False - invalid scheme
+    
+    Security Design:
+    - Relative URLs are always safe (redirected within same origin)
+    - Absolute URLs must match current request host OR be in ALLOWED_HOSTS
+    - This prevents attackers from chaining open redirects with other attacks
+    - Uses Django's standard approach from django.utils.http
     """
     if not url:
         return False
     
-    # URL should start with / for relative URLs or be valid scheme+host for same-origin
-    # Reject protocol-relative URLs (//example.com/path)
+    # Reject protocol-relative URLs immediately
+    # These can bypass HTTPS/HTTP scheme validation
     if url.startswith('//'):
         return False
     
-    # Check for absolute URLs with external hosts
-    if url.startswith('http://') or url.startswith('https://'):
-        # For absolute URLs, we need to validate the host
-        from urllib.parse import urlparse
-        parsed = urlparse(url)
-        parsed_host = parsed.netloc
-        
-        # If request provided, compare with current host
-        if request:
-            current_host = request.get_host()
-            if parsed_host != current_host:
-                return False  # Different host
-        
-        # If allowed hosts provided, check against whitelist
-        if allowed_relative_hosts:
-            if parsed_host not in allowed_relative_hosts:
-                return False
-        
-        # If no request and no whitelist, reject absolute URLs (be conservative)
-        if not request and not allowed_relative_hosts:
-            return False
+    # Use Django's built-in validation for URLs with schemes
+    # This validates both HTTP(S) URLs and rejects dangerous schemes
+    from django.utils.http import url_has_allowed_host_and_scheme
     
-    # Relative URLs starting with / are safe
-    # (They'll be served from same origin)
+    # Build list of allowed hosts
+    allowed_hosts = []
+    
+    # Add current request host if available
+    if request:
+        allowed_hosts.append(request.get_host())
+    
+    # Add any explicitly allowed hosts
+    if allowed_relative_hosts:
+        allowed_hosts.extend(allowed_relative_hosts)
+    
+    # For relative URLs (starting with /), they're always safe
+    # They're served from the same origin
     if url.startswith('/'):
         return True
     
-    # Allow named URL references (for link generation)
-    # But reject anything else
+    # For absolute URLs, use Django's standard validation
+    # This checks scheme (only http/https allowed) and host validation
+    if url.startswith('http://') or url.startswith('https://'):
+        # Use Django's utility with our allowed hosts
+        # If no allowed hosts specified, require request for validation
+        if not allowed_hosts:
+            return False
+        return url_has_allowed_host_and_scheme(url, allowed_hosts=allowed_hosts)
+    
+    # Reject any other URLs (javascript:, data:, etc.)
     return False

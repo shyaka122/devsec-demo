@@ -148,10 +148,10 @@ class LoginOpenRedirectTests(TestCase):
     
     def test_login_get_request_with_safe_next_displays_hidden_field(self):
         """GET login page with safe 'next' should include hidden field in form."""
-        response = self.client.get(reverse('shyaka:login') + '?next=/profile/')
+        response = self.client.get(reverse('shyaka:login') + '?next=/auth/profile/')
         self.assertContains(response, 'type="hidden"')
         self.assertContains(response, 'name="next"')
-        self.assertContains(response, 'value="/profile/"')
+        self.assertContains(response, 'value="/auth/profile/"')
     
     def test_login_get_request_with_unsafe_next_does_not_include_field(self):
         """GET login page with unsafe 'next' should NOT include hidden field."""
@@ -237,7 +237,7 @@ class RegisterOpenRedirectTests(TestCase):
     def test_register_with_safe_next_includes_it_in_redirect(self):
         """Registration with safe 'next' should pass it to login page."""
         response = self.client.post(
-            reverse('shyaka:register') + '?next=/dashboard/',
+            reverse('shyaka:register') + '?next=/auth/dashboard/',
             {
                 'username': 'newuser',
                 'email': 'new@example.com',
@@ -269,7 +269,7 @@ class RegisterOpenRedirectTests(TestCase):
     
     def test_register_get_request_with_safe_next_displays_field(self):
         """GET register page with safe 'next' should include hidden field."""
-        response = self.client.get(reverse('shyaka:register') + '?next=/profile/')
+        response = self.client.get(reverse('shyaka:register') + '?next=/auth/profile/')
         self.assertContains(response, 'type="hidden"')
         self.assertContains(response, 'name="next"')
     
@@ -322,7 +322,7 @@ class PasswordResetOpenRedirectTests(TestCase):
         uidb64 = urlsafe_base64_encode(force_bytes(self.user.id))
         
         response = self.client.post(
-            reverse('shyaka:password_reset_confirm', args=[uidb64, token]) + '?next=/dashboard/',
+            reverse('shyaka:password_reset_confirm', args=[uidb64, token]) + '?next=/auth/dashboard/',
             {
                 'new_password1': 'NewSecurePassword123!',
                 'new_password2': 'NewSecurePassword123!',
@@ -381,11 +381,11 @@ class PasswordResetOpenRedirectTests(TestCase):
         uidb64 = urlsafe_base64_encode(force_bytes(self.user.id))
         
         response = self.client.get(
-            reverse('shyaka:password_reset_confirm', args=[uidb64, token]) + '?next=/dashboard/'
+            reverse('shyaka:password_reset_confirm', args=[uidb64, token]) + '?next=/auth/dashboard/'
         )
         self.assertContains(response, 'type="hidden"')
         self.assertContains(response, 'name="next"')
-        self.assertContains(response, 'value="/dashboard/"')
+        self.assertContains(response, 'value="/auth/dashboard/"')
 
 
 class OpenRedirectAttackScenarioTests(TestCase):

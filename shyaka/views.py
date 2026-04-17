@@ -1,4 +1,5 @@
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User, Group
@@ -58,7 +59,7 @@ def register(request):
                 )
                 # Safely redirect to login or next URL if provided
                 if next_url and is_safe_redirect_url(next_url, request):
-                    return redirect(f'shyaka:login?next={next_url}')
+                    return redirect(reverse('shyaka:login') + f'?next={next_url}')
                 return redirect('shyaka:login')
             except IntegrityError:
                 messages.error(
