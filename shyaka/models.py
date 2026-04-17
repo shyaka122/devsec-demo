@@ -144,3 +144,156 @@ class LoginAttempt(models.Model):
             success=success,
             user_agent=user_agent[:500],  # Limit user agent length
         )
+
+
+class AuditLog(models.Model):
+    """
+    Audit log for security-relevant events.
+    
+    Records all authentication and privilege-changing events for accountability,
+    compliance, and security investigation purposes.
+    
+    Security Properties:
+    - Immutable after creation (no delete/update through normal app flow)
+    - Never logs sensitive data (passwords, tokens, etc.)
+    - Records user context (who, when, from where, what)
+    - Supports compliance requirements (GDPR, SOC 2, etc.)
+    - Queryable for security investigations and monitoring
+    
+    Event Types Logged:
+    - Authentication: registration, login success/failure, logout
+    - Privilege Changes: role assignments, group membership changes
+    - Password Management: password change, password reset
+    - Profile Changes: user profile updates
+    """
+    
+    # Event type choices
+    EVENT_REGISTRATION = 'registration'
+    EVENT_LOGIN_SUCCESS = 'login_success'
+    EVENT_LOGIN_FAILURE = 'login_failure'
+    EVENT_LOGOUT = 'logout'
+    EVENT_PASSWORD_CHANGE = 'password_change'
+    EVENT_PASSWORD_RESET = 'password_reset'
+    EVENT_ROLE_ASSIGNED = 'role_assigned'
+    EVENT_ROLE_REMOVED = 'role_removed'
+    EVENT_PROFILE_UPDATED = 'profile_updated'
+    
+    EVENT_CHOICES = [
+        (EVENT_REGISTRATION, 'User Registration'),
+        (EVENT_LOGIN_SUCCESS, 'Login Success'),
+        (EVENT_LOGIN_FAILURE, 'Login Failure'),
+        (EVENT_LOGOUT, 'Logout'),
+        (EVENT_PASSWORD_CHANGE, 'Password Change'),
+        (EVENT_PASSWORD_RESET, 'Password Reset'),
+        (EVENT_ROLE_ASSIGNED, 'Role Assigned'),
+        (EVENT_ROLE_REMOVED, 'Role Removed'),
+        (EVENT_PROFILE_UPDATED, 'Profile Updated'),
+    ]
+    
+    # Core audit data
+    timestamp = models.DateTimeField(default=timezone.now, db_index=True)
+    event_type = models.CharField(
+        max_length=20,
+        choices=EVENT_CHOICES,
+        db_index=True,
+        help_text="Type of security-relevant event"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_logs_as_subject',
+        db_index=True,
+        help_text="User who was affected by the event"
+    )
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='audit_logs_as_actor',
+        db_index=True,
+        help_text="User who performed the action (for privilege changes)"
+    )
+    ip_address = models.GenericIPAddressField(
+        db_index=True,
+        help_text="IP address from which the event originated"
+    )
+    user_agent = models.TextField(
+        blank=True,
+        help_text="Browser/client information"
+    )
+    description = models.TextField(
+        help_text="Human-readable description of the event"
+    )
+    details = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured event details (never includes secrets)"
+    )
+    
+    class Meta:
+        verbose_name = 'Audit Log'
+        verbose_name_plural = 'Audit Logs'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp']),
+            models.Index(fields=['event_type', '-timestamp']),
+            models.Index(fields=['user', '-timestamp']),
+            models.Index(fields=['actor', '-timestamp']),
+            models.Index(fields=['ip_address', '-timestamp']),
+        ]
+    
+    def __str__(self):
+        user_str = self.user.username if self.user else 'unknown'
+        return f"[{self.event_type}] {user_str} at {self.timestamp}"
+    
+    @classmethod
+    def log_event(cls, event_type, user, ip_address, description, 
+                  actor=None, user_agent='', details=None):
+        """
+        Create an audit log entry.
+        
+        Args:
+            event_type: Type of event (use EVENT_* constants)
+            user: User affected by the event (User instance or None)
+            ip_address: IP address of the request
+            description: Human-readable description
+            actor: User who performed the action (for privilege changes)
+            user_agent: Browser/client info
+            details: Additional structured details (never include secrets)
+        
+        Returns:
+            The created AuditLog instance
+        """
+        if details is None:
+            details = {}
+        
+        return cls.objects.create(
+            event_type=event_type,
+            user=user,
+            actor=actor,
+            ip_address=ip_address,
+            user_agent=user_agent[:500],  # Limit length
+            description=description,
+            details=details,
+        )
+    
+    @classmethod
+    def get_user_history(cls, user, days=90):
+        """
+        Get audit log history for a specific user.
+        
+        Args:
+            user: User instance
+            days: How many days back to look (default: 90)
+        
+        Returns:
+            QuerySet of audit logs for this user
+        """
+        since = timezone.now() - timedelta(days=days)
+        return cls.objects.filter(
+            user=user,
+            timestamp__gte=since
+        ).order_by('-timestamp')

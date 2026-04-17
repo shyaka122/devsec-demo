@@ -175,3 +175,75 @@ def is_safe_redirect_url(url, request=None, allowed_relative_hosts=None):
     
     # Reject any other URLs (javascript:, data:, etc.)
     return False
+
+
+# ============================================================================
+# Audit Logging Utilities - Security Event Tracking
+# ============================================================================
+
+def get_client_ip(request):
+    """
+    Extract client IP address from request.
+    Considers X-Forwarded-For header (for proxies) and falls back to REMOTE_ADDR.
+    
+    Security: Uses most recent IP from X-Forwarded-For to avoid spoofing.
+    """
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        # Take the last IP (most recent proxy)
+        ip = x_forwarded_for.split(',')[-1].strip()
+    else:
+        ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
+    return ip
+
+
+def get_user_agent(request):
+    """
+    Extract user agent from request.
+    Limits length to prevent storage issues.
+    """
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    return user_agent[:500]  # Limit to 500 chars
+
+
+def log_audit_event(event_type, request, user=None, actor=None, 
+                   description='', details=None):
+    """
+    Log a security-relevant event to the audit log.
+    
+    Args:
+        event_type: Type of event (use AuditLog.EVENT_* constants)
+        request: Django HttpRequest object
+        user: User affected by the event
+        actor: User who performed the action
+        description: Human-readable description
+        details: Additional structured details
+    
+    Returns:
+        The created AuditLog instance or None if import fails
+    
+    Note:
+        Never log passwords, tokens, or other sensitive data in details.
+        Always pass safe, non-sensitive data.
+    """
+    try:
+        from .models import AuditLog
+        
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
+        
+        return AuditLog.log_event(
+            event_type=event_type,
+            user=user,
+            ip_address=ip_address,
+            description=description,
+            actor=actor,
+            user_agent=user_agent,
+            details=details or {},
+        )
+    except Exception as e:
+        # Don't let logging errors break the application
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to log audit event: {e}")
+        return None

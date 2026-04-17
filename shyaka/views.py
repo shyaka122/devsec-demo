@@ -20,7 +20,7 @@ from .forms import (
     PasswordResetCustomForm,
     PasswordResetConfirmCustomForm,
 )
-from .models import UserProfile, LoginAttempt
+from .models import UserProfile, LoginAttempt, AuditLog
 from .auth_utils import (
     require_role,
     require_admin,
@@ -28,6 +28,8 @@ from .auth_utils import (
     is_admin,
     is_staff,
     is_safe_redirect_url,
+    log_audit_event,
+    get_client_ip,
 )
 
 
@@ -53,6 +55,15 @@ def register(request):
                 user = form.save()
                 # Create associated UserProfile
                 UserProfile.objects.create(user=user)
+                
+                # Log registration event
+                log_audit_event(
+                    event_type=AuditLog.EVENT_REGISTRATION,
+                    request=request,
+                    user=user,
+                    description=f'User {user.username} registered successfully'
+                )
+                
                 messages.success(
                     request,
                     'Registration successful! Please log in.'
@@ -79,24 +90,6 @@ def register(request):
         context['next'] = next_url
     
     return render(request, 'shyaka/register.html', context)
-
-
-
-
-def get_client_ip(request):
-    """
-    Extract client IP address from request.
-    Considers X-Forwarded-For header (for proxies) and falls back to REMOTE_ADDR.
-    
-    Security: Uses most recent IP from X-Forwarded-For to avoid spoofing via chain padding.
-    """
-    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-    if x_forwarded_for:
-        # Take the last IP (most recent proxy)
-        ip = x_forwarded_for.split(',')[-1].strip()
-    else:
-        ip = request.META.get('REMOTE_ADDR', '127.0.0.1')
-    return ip
 
 
 @require_http_methods(["GET", "POST"])
@@ -174,6 +167,15 @@ def login_view(request):
                     success=True,
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )
+                
+                # Log successful login event
+                log_audit_event(
+                    event_type=AuditLog.EVENT_LOGIN_SUCCESS,
+                    request=request,
+                    user=user,
+                    description=f'User {username} logged in successfully'
+                )
+                
                 messages.success(request, f'Welcome back, {username}!')
                 
                 # Safely redirect to next URL if provided and valid
@@ -187,6 +189,13 @@ def login_view(request):
                     ip_address=client_ip,
                     success=False,
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
+                )
+                
+                # Log failed login event
+                log_audit_event(
+                    event_type=AuditLog.EVENT_LOGIN_FAILURE,
+                    request=request,
+                    description=f'Failed login attempt for username: {username}'
                 )
                 
                 # Generic error message (prevents username enumeration)
@@ -217,7 +226,17 @@ def logout_view(request):
     # Get optional next parameter for post-logout redirect (open redirect protection)
     next_url = request.GET.get('next') or request.POST.get('next')
     
+    user = request.user
     logout(request)
+    
+    # Log logout event
+    log_audit_event(
+        event_type=AuditLog.EVENT_LOGOUT,
+        request=request,
+        user=user,
+        description=f'User {user.username} logged out'
+    )
+    
     messages.success(request, 'You have been logged out successfully.')
     
     # Safely redirect to next URL if provided and valid
@@ -395,6 +414,15 @@ def change_password(request):
         form = PasswordChangeCustomForm(request.user, request.POST)
         if form.is_valid():
             user = form.save()
+            
+            # Log password change event
+            log_audit_event(
+                event_type=AuditLog.EVENT_PASSWORD_CHANGE,
+                request=request,
+                user=user,
+                description=f'User {user.username} changed their password'
+            )
+            
             messages.success(request, 'Your password has been changed successfully.')
             return redirect('shyaka:dashboard')
         else:
@@ -497,8 +525,29 @@ def assign_user_role(request):
         if role in ['admin', 'staff']:
             group = Group.objects.get(name=role)
             user.groups.add(group)
+            
+            # Log role assignment event
+            log_audit_event(
+                event_type=AuditLog.EVENT_ROLE_ASSIGNED,
+                request=request,
+                user=user,
+                actor=request.user,
+                description=f'User {user.username} assigned to {role} role by admin {request.user.username}',
+                details={'new_role': role}
+            )
+            
             messages.success(request, f'User {user.username} assigned to {role} group.')
         else:
+            # Log role removal (standard user)
+            log_audit_event(
+                event_type=AuditLog.EVENT_ROLE_REMOVED,
+                request=request,
+                user=user,
+                actor=request.user,
+                description=f'User {user.username} set to standard user by admin {request.user.username}',
+                details={'previous_role': 'admin or staff', 'new_role': 'user'}
+            )
+            
             messages.success(request, f'User {user.username} set as standard user.')
         
         return redirect('shyaka:manage_users')
@@ -634,6 +683,15 @@ def password_reset_confirm(request, uidb64, token):
             user = form.save()
             # Update session so user stays logged in if they were
             update_session_auth_hash(request, user)
+            
+            # Log password reset event
+            log_audit_event(
+                event_type=AuditLog.EVENT_PASSWORD_RESET,
+                request=request,
+                user=user,
+                description=f'User {user.username} reset their password'
+            )
+            
             messages.success(
                 request,
                 'Your password has been reset successfully. You can now log in.'
