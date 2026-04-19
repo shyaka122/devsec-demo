@@ -26,7 +26,7 @@
                             <strong>Last Name:</strong> {{ target_user.last_name|default:"Not set" }}
                         </p>
                         <p>
-                            <strong>Bio:</strong> {{ profile.bio|default:"No bio provided" }}
+                            <strong>Bio:</strong> {{ profile.bio|escape|default:"No bio provided" }}
                         </p>
                         <p>
                             <strong>Member Since:</strong> {{ profile.date_created|date:"F d, Y" }}
