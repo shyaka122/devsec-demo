@@ -60,7 +60,7 @@
         {% if profile.bio %}
         <div class="profile-item">
             <label>Bio:</label>
-            <span>{{ profile.bio|truncatewords:20 }}</span>
+            <span>{{ profile.bio|escape|truncatewords:20 }}</span>
         </div>
         {% endif %}
         
