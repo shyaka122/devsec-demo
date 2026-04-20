@@ -116,6 +116,19 @@ USE_I18N = True
 USE_TZ = True
 
 
+# ============================================================================
+# Media Files (User Uploads) Configuration
+# ============================================================================
+# Security configuration for file uploads (avatars, documents, etc.)
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Create media directory if it doesn't exist
+MEDIA_ROOT.mkdir(exist_ok=True)
+
+
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 

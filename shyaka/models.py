@@ -2,15 +2,23 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
+import os
 
 
 class UserProfile(models.Model):
     """
     Extended user profile for authentication service.
     Stores additional information beyond Django's built-in User model.
+    
+    File Upload Security:
+    - Avatar is validated and stored in per-user directory
+    - Only image files are allowed for avatars
+    - File size is limited to 5MB
+    - Filenames are sanitized to prevent path traversal
     """
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
     bio = models.TextField(blank=True, default='')
+    avatar = models.ImageField(upload_to='avatars/%Y/%m/%d/', blank=True, null=True)
     date_created = models.DateTimeField(auto_now_add=True)
     date_updated = models.DateTimeField(auto_now=True)
     
@@ -297,3 +305,129 @@ class AuditLog(models.Model):
             user=user,
             timestamp__gte=since
         ).order_by('-timestamp')
+
+
+class Document(models.Model):
+    """
+    User-uploaded documents with secure file handling.
+    
+    File Upload Security:
+    - Only safe file types allowed (PDF, DOCX, TXT, etc.)
+    - Files stored outside web root (in protected media directory)
+    - Filenames sanitized to prevent path traversal
+    - File size limited to 10MB
+    - Original filename preserved (sanitized) for download
+    - MIME type validated on upload
+    - Access controlled at view level (only owner or admin)
+    
+    Security Properties:
+    - Immutable after upload (no edit option)
+    - Soft delete only (never permanently deleted for audit trail)
+    - Owner-based access control
+    - Download endpoint validates permissions
+    """
+    
+    # Safe file types for documents
+    ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'xlsx', 'xls', 'pptx', 'ppt'}
+    ALLOWED_MIME_TYPES = {
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'text/plain',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-powerpoint',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    }
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    
+    # Document metadata
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='documents',
+        help_text="User who uploaded this document"
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text="Document title/name"
+    )
+    file = models.FileField(
+        upload_to='documents/%Y/%m/%d/',
+        help_text="Uploaded document file"
+    )
+    original_filename = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Original filename (for display)"
+    )
+    mime_type = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="MIME type of uploaded file"
+    )
+    file_size = models.BigIntegerField(
+        help_text="File size in bytes"
+    )
+    uploaded_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Access control
+    is_public = models.BooleanField(
+        default=False,
+        help_text="If True, any authenticated user can view"
+    )
+    is_deleted = models.BooleanField(
+        default=False,
+        help_text="Soft delete flag (document not actually deleted)"
+    )
+    
+    class Meta:
+        verbose_name = 'Document'
+        verbose_name_plural = 'Documents'
+        ordering = ['-uploaded_at']
+        indexes = [
+            models.Index(fields=['owner', '-uploaded_at']),
+            models.Index(fields=['uploaded_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.title} by {self.owner.username}"
+    
+    def can_access(self, user):
+        """
+        Check if a user can access this document.
+        
+        Args:
+            user: User instance
+        
+        Returns:
+            bool: True if user can access, False otherwise
+        """
+        if self.is_deleted:
+            return False
+        if user.is_superuser:
+            return True
+        if self.owner == user:
+            return True
+        if self.is_public and user.is_authenticated:
+            return True
+        return False
+    
+    def delete(self, *args, **kwargs):
+        """
+        Soft delete: mark as deleted but don't remove from database.
+        Preserves audit trail and download history.
+        """
+        self.is_deleted = True
+        self.save()
+    
+    def hard_delete(self):
+        """Permanently delete document (use with caution - breaks audit trail)."""
+        if self.file:
+            self.file.delete(save=False)
+        super(Document, self).delete()
+

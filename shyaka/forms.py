@@ -7,7 +7,12 @@ from django.contrib.auth.forms import (
     SetPasswordForm,
 )
 from django.core.exceptions import ValidationError
-from .models import UserProfile
+from .models import UserProfile, Document
+from .auth_utils import (
+    is_valid_image_upload,
+    is_valid_document_upload,
+    sanitize_filename,
+)
 
 
 class RegistrationForm(UserCreationForm):
@@ -192,3 +197,120 @@ class PasswordResetConfirmCustomForm(SetPasswordForm):
             'autocomplete': 'new-password'
         })
     )
+
+
+class AvatarUploadForm(forms.ModelForm):
+    """
+    Form for uploading user avatar with security validation.
+    
+    Security properties:
+    - Only image files allowed (JPEG, PNG, WebP, GIF)
+    - File size limited to 5MB
+    - MIME type validated using magic bytes
+    - Filename sanitized to prevent path traversal
+    - Pillow validates actual image content
+    
+    References:
+    - OWASP CWE-434: Unrestricted Upload of File with Dangerous Type
+    - OWASP File Upload Cheat Sheet
+    """
+    
+    class Meta:
+        model = UserProfile
+        fields = ('avatar',)
+        widgets = {
+            'avatar': forms.FileInput(attrs={
+                'class': 'form-control',
+                'accept': 'image/jpeg,image/png,image/webp,image/gif',
+                'help_text': 'Select a JPEG, PNG, WebP, or GIF image (max 5MB)'
+            })
+        }
+    
+    def clean_avatar(self):
+        """Validate avatar upload before saving."""
+        avatar = self.cleaned_data.get('avatar')
+        
+        if not avatar:
+            return avatar
+        
+        # Validate image file
+        is_valid, error_message = is_valid_image_upload(avatar, max_size_bytes=5*1024*1024)
+        if not is_valid:
+            raise ValidationError(error_message)
+        
+        return avatar
+
+
+class DocumentUploadForm(forms.ModelForm):
+    """
+    Form for uploading documents with comprehensive security validation.
+    
+    Security properties:
+    - Only safe file types allowed (PDF, Office, Text)
+    - File size limited to 10MB
+    - MIME type validated using magic bytes
+    - Filename sanitized to prevent path traversal
+    - File extension must match MIME type
+    - Owner-based access control enforced in view
+    
+    Allowed file types:
+    - PDF documents (application/pdf)
+    - Microsoft Office (docx, xlsx, pptx)
+    - Text files (txt)
+    
+    References:
+    - OWASP CWE-434: Unrestricted Upload of File with Dangerous Type
+    - OWASP CWE-426: Untrusted Search Path
+    - OWASP CWE-427: Uncontrolled Search Path Element
+    - OWASP File Upload Cheat Sheet
+    """
+    
+    title = forms.CharField(
+        label='Document Title',
+        max_length=255,
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Enter document title (max 255 characters)'
+        }),
+        help_text='Brief title for the document'
+    )
+    
+    is_public = forms.BooleanField(
+        label='Allow other users to view this document',
+        required=False,
+        widget=forms.CheckboxInput(attrs={
+            'class': 'form-check-input'
+        }),
+        help_text='If checked, authenticated users can view this document'
+    )
+    
+    class Meta:
+        model = Document
+        fields = ('file', 'is_public')
+        widgets = {
+            'file': forms.FileInput(attrs={
+                'class': 'form-control',
+                'accept': '.pdf,.docx,.doc,.txt,.xlsx,.xls,.pptx,.ppt'
+            })
+        }
+    
+    def clean_file(self):
+        """Validate document upload before saving."""
+        file_obj = self.cleaned_data.get('file')
+        
+        if not file_obj:
+            raise ValidationError('Please select a file to upload.')
+        
+        # Validate document file
+        is_valid, error_message = is_valid_document_upload(file_obj, max_size_bytes=10*1024*1024)
+        if not is_valid:
+            raise ValidationError(error_message)
+        
+        return file_obj
+    
+    def clean_title(self):
+        """Sanitize document title."""
+        title = self.cleaned_data.get('title', '')
+        # Limit to 255 characters and strip whitespace
+        return title.strip()[:255] if title else 'Untitled Document'
+

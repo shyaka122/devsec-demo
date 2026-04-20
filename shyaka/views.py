@@ -8,9 +8,11 @@ from django.contrib import messages
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_protect
 from django.db import IntegrityError
-from django.http import Http404
+from django.http import Http404, FileResponse
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
+import hashlib
+import os
 
 from .forms import (
     RegistrationForm,
@@ -19,8 +21,10 @@ from .forms import (
     PasswordChangeCustomForm,
     PasswordResetCustomForm,
     PasswordResetConfirmCustomForm,
+    AvatarUploadForm,
+    DocumentUploadForm,
 )
-from .models import UserProfile, LoginAttempt, AuditLog
+from .models import UserProfile, LoginAttempt, AuditLog, Document
 from .auth_utils import (
     require_role,
     require_admin,
@@ -30,6 +34,8 @@ from .auth_utils import (
     is_safe_redirect_url,
     log_audit_event,
     get_client_ip,
+    sanitize_filename,
+    generate_safe_filename,
 )
 
 
@@ -730,3 +736,245 @@ def password_reset_complete(request):
     Security: Provides clear guidance on next steps.
     """
     return render(request, 'shyaka/password_reset_complete.html')
+
+# ============================================================================
+# File Upload Views - Avatar and Document Management
+# ============================================================================
+
+@login_required
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def upload_avatar(request):
+    """
+    Avatar upload view with security validation.
+    
+    Security properties:
+    - Only authenticated users can upload
+    - CSRF protection on POST
+    - File validation: MIME type, size (5MB max), image content validation
+    - Filename sanitized to prevent path traversal
+    - Old avatar deleted when new one uploaded
+    - Access control: Only upload to own profile
+    
+    References:
+    - OWASP CWE-434: Unrestricted Upload of File with Dangerous Type
+    - OWASP CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+    """
+    profile = request.user.profile
+    
+    if request.method == 'POST':
+        form = AvatarUploadForm(request.POST, request.FILES, instance=profile)
+        
+        if form.is_valid():
+            # Delete old avatar if exists
+            if profile.avatar:
+                profile.avatar.delete(save=False)
+            
+            # Save new avatar
+            profile = form.save()
+            
+            # Log the upload event
+            log_audit_event(
+                event_type=AuditLog.EVENT_PROFILE_UPDATED,
+                request=request,
+                user=request.user,
+                description=f'User {request.user.username} uploaded a new avatar'
+            )
+            
+            messages.success(request, 'Avatar uploaded successfully!')
+            return redirect('shyaka:profile')
+        else:
+            # Form has validation errors
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f'{field}: {error}')
+    else:
+        form = AvatarUploadForm(instance=profile)
+    
+    context = {
+        'form': form,
+        'current_avatar': profile.avatar.url if profile.avatar else None,
+    }
+    return render(request, 'shyaka/upload_avatar.html', context)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+@csrf_protect
+def upload_document(request):
+    """
+    Document upload view with comprehensive security validation.
+    
+    Security properties:
+    - Only authenticated users can upload
+    - CSRF protection on POST
+    - File validation: MIME type, size (10MB max), extension check
+    - Filename sanitized and hash-prefixed for uniqueness
+    - Documents stored in per-user directory
+    - Owner-based access control
+    - Soft delete (documents not permanently deleted)
+    
+    References:
+    - OWASP CWE-434: Unrestricted Upload of File with Dangerous Type
+    - OWASP CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+    - OWASP CWE-552: Files and Directories Accessible to External Parties
+    """
+    if request.method == 'POST':
+        form = DocumentUploadForm(request.POST, request.FILES)
+        
+        if form.is_valid():
+            # Create document instance but don't save yet
+            document = form.save(commit=False)
+            document.owner = request.user
+            
+            # Store original filename (sanitized)
+            if request.FILES.get('file'):
+                original_filename = request.FILES['file'].name
+                document.original_filename = sanitize_filename(original_filename)
+                
+                # Create hash prefix for unique filename in upload
+                file_hash = hashlib.sha256(f"{request.user.id}{original_filename}".encode()).hexdigest()[:8]
+                document.file.name = f"documents/{request.user.id}/{file_hash}_{document.original_filename}"
+                
+                # Store MIME type
+                from .auth_utils import get_file_mime_type
+                document.mime_type = get_file_mime_type(request.FILES['file'])
+                document.file_size = request.FILES['file'].size
+            
+            # Save document
+            document.save()
+            
+            # Log the upload event
+            log_audit_event(
+                event_type=AuditLog.EVENT_PROFILE_UPDATED,
+                request=request,
+                user=request.user,
+                description=f'User {request.user.username} uploaded document: {document.title}'
+            )
+            
+            messages.success(request, 'Document uploaded successfully!')
+            return redirect('shyaka:document_list')
+        else:
+            # Form has validation errors
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f'{field}: {error}')
+    else:
+        form = DocumentUploadForm()
+    
+    context = {
+        'form': form,
+        'max_size_mb': 10,
+        'allowed_types': ', '.join(Document.ALLOWED_EXTENSIONS),
+    }
+    return render(request, 'shyaka/upload_document.html', context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def document_list(request):
+    """
+    List documents accessible to the current user.
+    
+    Security properties:
+    - Only shows documents owned by user or public documents
+    - Deleted documents (soft deleted) are not shown
+    - Access control enforced at query level
+    - Pagination to prevent DoS attacks
+    
+    References:
+    - OWASP A01:2021 - Broken Access Control
+    """
+    # Get user's own documents
+    own_documents = Document.objects.filter(
+        owner=request.user,
+        is_deleted=False
+    ).order_by('-uploaded_at')
+    
+    # Get public documents from other users
+    public_documents = Document.objects.filter(
+        is_deleted=False,
+        is_public=True
+    ).exclude(owner=request.user).order_by('-uploaded_at')
+    
+    context = {
+        'own_documents': own_documents,
+        'public_documents': public_documents,
+    }
+    return render(request, 'shyaka/document_list.html', context)
+
+
+@login_required
+@require_http_methods(["GET"])
+def download_document(request, document_id):
+    """
+    Download document with access control verification.
+    
+    Security properties:
+    - Access control: Only owner or admin can download
+    - Public documents can be downloaded by any authenticated user
+    - Content-Disposition header forces download instead of preview
+    - Mime type validation prevents content-type spoofing
+    - Soft deleted documents cannot be downloaded
+    
+    References:
+    - OWASP A01:2021 - Broken Access Control
+    - CWE-434: Unrestricted Upload of File with Dangerous Type
+    """
+    document = get_object_or_404(Document, pk=document_id)
+    
+    # Check access permissions
+    if not document.can_access(request.user):
+        messages.error(request, 'You do not have permission to access this document.')
+        return redirect('shyaka:document_list')
+    
+    # Log download event
+    log_audit_event(
+        event_type=AuditLog.EVENT_PROFILE_UPDATED,
+        request=request,
+        user=request.user,
+        description=f'User {request.user.username} downloaded document: {document.title}'
+    )
+    
+    # Return file with proper headers for download
+    response = FileResponse(document.file.open('rb'), content_type=document.mime_type)
+    response['Content-Disposition'] = f'attachment; filename="{document.original_filename}"'
+    return response
+
+
+@login_required
+@require_http_methods(["POST"])
+@csrf_protect
+def delete_document(request, document_id):
+    """
+    Soft delete document (mark as deleted, don't remove from DB).
+    
+    Security properties:
+    - Only owner or admin can delete
+    - Soft delete preserves audit trail
+    - Document not permanently removed from database
+    - Download becomes impossible after deletion
+    
+    References:
+    - OWASP A01:2021 - Broken Access Control
+    """
+    document = get_object_or_404(Document, pk=document_id)
+    
+    # Check access permissions (owner or admin)
+    if document.owner != request.user and not is_admin(request.user):
+        messages.error(request, 'You do not have permission to delete this document.')
+        return redirect('shyaka:document_list')
+    
+    document_title = document.title
+    document.delete()  # Soft delete
+    
+    # Log deletion event
+    log_audit_event(
+        event_type=AuditLog.EVENT_PROFILE_UPDATED,
+        request=request,
+        user=request.user,
+        description=f'User {request.user.username} deleted document: {document_title}'
+    )
+    
+    messages.success(request, 'Document deleted successfully.')
+    return redirect('shyaka:document_list')

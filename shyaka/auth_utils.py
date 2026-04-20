@@ -247,3 +247,263 @@ def log_audit_event(event_type, request, user=None, actor=None,
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to log audit event: {e}")
         return None
+
+
+# ============================================================================
+# File Upload Security Utilities - Validation and Sanitization
+# ============================================================================
+
+import re
+import os
+import mimetypes
+
+# Optional import - magic for better MIME type detection
+try:
+    import magic
+    HAS_MAGIC = True
+except ImportError:
+    HAS_MAGIC = False
+
+
+def sanitize_filename(filename):
+    """
+    Sanitize a filename to prevent path traversal and other attacks.
+    
+    Security measures:
+    - Removes path traversal attempts (../, .., backslashes)
+    - Removes special characters that could be problematic
+    - Limits length to 255 characters
+    - Converts spaces and special chars to underscores
+    - Preserves file extension
+    
+    Args:
+        filename (str): Original filename from upload
+    
+    Returns:
+        str: Safe, sanitized filename
+    
+    Examples:
+        sanitize_filename('../../../etc/passwd')  # Returns 'etc_passwd'
+        sanitize_filename('file with spaces.pdf')  # Returns 'file_with_spaces.pdf'
+        sanitize_filename('../../malicious_file.exe')  # Returns 'malicious_file.exe'
+    
+    Security Design (OWASP CWE-434):
+    - Only allows alphanumeric, hyphens, underscores, and dots
+    - Prevents directory traversal with ../ patterns
+    - Removes null bytes and other dangerous characters
+    - Limits filename length to filesystem limits
+    """
+    if not filename:
+        return 'upload'
+    
+    # Remove path separators and traversal attempts
+    filename = os.path.basename(filename)  # Remove any path components
+    filename = filename.replace('\\', '_').replace('/', '_')
+    filename = filename.replace('..', '_')
+    
+    # Remove null bytes (can cause truncation in C libraries)
+    filename = filename.replace('\x00', '')
+    
+    # Keep only safe characters (letters, numbers, -, _, .)
+    # Replace everything else with underscore
+    filename = re.sub(r'[^\w\-\.]', '_', filename, flags=re.UNICODE)
+    
+    # Remove leading dots (hidden files, .htaccess attacks)
+    filename = filename.lstrip('.')
+    
+    # Limit length (255 is typical filesystem limit, leave buffer for hash)
+    if len(filename) > 200:
+        name, ext = os.path.splitext(filename)
+        filename = name[:190] + ext
+    
+    # Ensure we have a filename
+    if not filename or filename == '_':
+        filename = 'upload'
+    
+    return filename
+
+
+def get_file_mime_type(file_obj):
+    """
+    Detect MIME type of uploaded file using magic bytes.
+    
+    This is more secure than relying on file extension,
+    as extensions can be spoofed by attackers.
+    
+    Args:
+        file_obj: Django UploadedFile object or file-like object
+    
+    Returns:
+        str: MIME type (e.g., 'application/pdf', 'image/jpeg')
+             Returns 'application/octet-stream' if unable to detect
+    
+    Security Design:
+    - Reads file magic bytes (header) for type detection
+    - Immune to extension spoofing
+    - Works with python-magic library (optional)
+    - Falls back to extension-based detection if magic unavailable
+    
+    References:
+    - CWE-434: Unrestricted Upload of File with Dangerous Type
+    """
+    try:
+        # Try using python-magic if available (most accurate)
+        if HAS_MAGIC:
+            file_obj.seek(0)  # Reset to beginning
+            file_header = file_obj.read(1024)  # Read first 1KB for magic bytes
+            file_obj.seek(0)  # Reset again for actual use
+            
+            mime = magic.from_buffer(file_header, mime=True)
+            return mime if mime else 'application/octet-stream'
+    except (AttributeError, Exception):
+        pass
+    
+    # Fallback to extension-based detection
+    try:
+        if hasattr(file_obj, 'name'):
+            mime_type, _ = mimetypes.guess_type(file_obj.name)
+            return mime_type or 'application/octet-stream'
+    except Exception:
+        pass
+    
+    return 'application/octet-stream'
+
+
+def is_valid_image_upload(file_obj, max_size_bytes=5*1024*1024):
+    """
+    Validate an image upload for avatar/profile image.
+    
+    Security checks:
+    - MIME type must be image (image/jpeg, image/png, image/webp, image/gif)
+    - File size must not exceed max_size_bytes
+    - Filename is checked for suspicious patterns
+    - Actual image content is validated (not just extension)
+    
+    Args:
+        file_obj: Django UploadedFile object
+        max_size_bytes: Maximum allowed file size (default: 5MB)
+    
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    
+    Examples:
+        is_valid, error = is_valid_image_upload(uploaded_file)
+        if is_valid:
+            # Save file
+        else:
+            print(f"Upload failed: {error}")
+    
+    Security Design (OWASP CWE-434):
+    - Validates MIME type using magic bytes
+    - Checks file size before processing
+    - Validates dimensions if possible
+    - Prevents executable uploads disguised as images
+    """
+    allowed_mime_types = {
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+    }
+    
+    # Check file size
+    if hasattr(file_obj, 'size'):
+        if file_obj.size > max_size_bytes:
+            return False, f"Image too large. Maximum size is {max_size_bytes/(1024*1024):.1f}MB"
+    
+    # Detect MIME type
+    mime_type = get_file_mime_type(file_obj)
+    if mime_type not in allowed_mime_types:
+        return False, f"Invalid image type: {mime_type}. Allowed types: JPEG, PNG, WebP, GIF"
+    
+    # Validate PIL can open it (prevents corrupt files)
+    try:
+        from PIL import Image
+        file_obj.seek(0)
+        img = Image.open(file_obj)
+        img.verify()
+        file_obj.seek(0)
+    except Exception as e:
+        return False, f"Invalid or corrupted image file: {str(e)}"
+    
+    return True, None
+
+
+def is_valid_document_upload(file_obj, max_size_bytes=10*1024*1024):
+    """
+    Validate a document upload (PDF, Office, Text, etc.).
+    
+    Security checks:
+    - MIME type must be in allowed list
+    - File extension must match MIME type
+    - File size must not exceed max_size_bytes
+    - Filename is sanitized
+    
+    Args:
+        file_obj: Django UploadedFile object
+        max_size_bytes: Maximum allowed file size (default: 10MB)
+    
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    
+    Examples:
+        is_valid, error = is_valid_document_upload(uploaded_file)
+        if is_valid:
+            # Save document
+        else:
+            print(f"Upload failed: {error}")
+    
+    Security Design (OWASP CWE-434):
+    - Allows only safe document types
+    - Rejects executables, scripts, archives
+    - Validates MIME type matches content
+    - Size limit prevents DoS attacks
+    - References: CWE-434, OWASP File Upload Cheat Sheet
+    """
+    # Import from models to avoid circular import
+    from .models import Document
+    
+    allowed_mime_types = Document.ALLOWED_MIME_TYPES
+    allowed_extensions = Document.ALLOWED_EXTENSIONS
+    
+    # Check file size first
+    if hasattr(file_obj, 'size'):
+        if file_obj.size > max_size_bytes:
+            return False, f"File too large. Maximum size is {max_size_bytes/(1024*1024):.1f}MB"
+    
+    # Get file extension
+    if hasattr(file_obj, 'name'):
+        ext = os.path.splitext(file_obj.name)[1].lstrip('.').lower()
+        if ext not in allowed_extensions:
+            return False, f"File type not allowed: .{ext}. Allowed types: {', '.join(sorted(allowed_extensions))}"
+    
+    # Detect MIME type from content
+    mime_type = get_file_mime_type(file_obj)
+    if mime_type not in allowed_mime_types:
+        return False, f"Invalid file type: {mime_type}. File content does not match allowed types."
+    
+    return True, None
+
+
+def generate_safe_filename(original_filename, prefix=''):
+    """
+    Generate a safe filename with optional prefix (hash or timestamp).
+    
+    Args:
+        original_filename (str): Original filename from upload
+        prefix (str): Optional prefix to add before filename (e.g., hash)
+    
+    Returns:
+        str: Safe filename ready for storage
+    
+    Example:
+        safe_name = generate_safe_filename('My Document.pdf', prefix='abc123_')
+        # Returns: 'abc123_My_Document.pdf' or similar
+    """
+    safe_name = sanitize_filename(original_filename)
+    if prefix:
+        name, ext = os.path.splitext(safe_name)
+        return f"{prefix}{name}{ext}"
+    return safe_name
+

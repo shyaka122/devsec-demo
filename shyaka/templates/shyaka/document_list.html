@@ -1,0 +1,104 @@
+{% extends 'shyaka/base.html' %}
+
+{% block title %}My Documents - Shyaka{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row">
+        <div class="col-md-12">
+            <h2>My Documents</h2>
+            
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+            
+            <a href="{% url 'shyaka:upload_document' %}" class="btn btn-primary mb-3">Upload Document</a>
+            
+            <h3>My Documents</h3>
+            {% if own_documents %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Filename</th>
+                                <th>Size</th>
+                                <th>Type</th>
+                                <th>Uploaded</th>
+                                <th>Public</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for doc in own_documents %}
+                                <tr>
+                                    <td>{{ doc.title }}</td>
+                                    <td>{{ doc.original_filename }}</td>
+                                    <td>{{ doc.file_size|filesizeformat }}</td>
+                                    <td>{{ doc.mime_type }}</td>
+                                    <td>{{ doc.uploaded_at|date:"Y-m-d H:i" }}</td>
+                                    <td>
+                                        {% if doc.is_public %}
+                                            <span class="badge bg-success">Yes</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">No</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'shyaka:download_document' doc.id %}" class="btn btn-sm btn-primary">Download</a>
+                                        <form method="post" action="{% url 'shyaka:delete_document' doc.id %}" style="display: inline;">
+                                            {% csrf_token %}
+                                            <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Are you sure?');">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p>You haven't uploaded any documents yet.</p>
+            {% endif %}
+            
+            <hr>
+            
+            <h3>Public Documents</h3>
+            {% if public_documents %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Owner</th>
+                                <th>Filename</th>
+                                <th>Uploaded</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for doc in public_documents %}
+                                <tr>
+                                    <td>{{ doc.title }}</td>
+                                    <td>{{ doc.owner.username }}</td>
+                                    <td>{{ doc.original_filename }}</td>
+                                    <td>{{ doc.uploaded_at|date:"Y-m-d H:i" }}</td>
+                                    <td>
+                                        <a href="{% url 'shyaka:download_document' doc.id %}" class="btn btn-sm btn-primary">Download</a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <p>No public documents available.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
