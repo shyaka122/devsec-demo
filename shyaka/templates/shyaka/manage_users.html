@@ -1,0 +1,85 @@
+{% extends "shyaka/base.html" %}
+
+{% block title %}Manage Users - Shyaka Auth{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>👥 User Management</h1>
+    <p style="text-align: center; color: #666; margin-bottom: 1.5rem;">Manage user roles and permissions</p>
+    
+    {% if users_data %}
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 1.5rem;">
+            <thead>
+                <tr style="background: #f0f0f0;">
+                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #ddd;">Username</th>
+                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #ddd;">Email</th>
+                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #ddd;">Role</th>
+                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #ddd;">Status</th>
+                    <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #ddd;">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in users_data %}
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 0.75rem;"><strong>{{ item.user.username }}</strong></td>
+                        <td style="padding: 0.75rem;">{{ item.user.email|default:"-" }}</td>
+                        <td style="padding: 0.75rem;">
+                            <span class="role-badge {% if item.groups %}{{ item.groups.0 }}{% else %}user{% endif %}">
+                                {% if item.groups %}{{ item.groups.0 }}{% else %}user{% endif %}
+                            </span>
+                        </td>
+                        <td style="padding: 0.75rem;">
+                            {% if item.user.is_active %}
+                                <span style="color: #28a745; font-weight: bold;">✓ Active</span>
+                            {% else %}
+                                <span style="color: #e74c3c; font-weight: bold;">✗ Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td style="padding: 0.75rem;">
+                            <form method="POST" action="{% url 'shyaka:assign_user_role' %}" style="display: flex; gap: 0.5rem;">
+                                {% csrf_token %}
+                                <input type="hidden" name="user_id" value="{{ item.user.id }}">
+                                <select name="role" style="padding: 0.4rem; border-radius: 3px; border: 1px solid #ccc; font-size: 0.9rem;">
+                                    <option value="user" {% if item.role == "user" %}selected{% endif %}>User</option>
+                                    <option value="staff">Staff</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                                <button type="submit" class="btn-primary" style="padding: 0.4rem 0.75rem; font-size: 0.9rem; width: auto;">Assign</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p style="text-align: center; color: #666; padding: 2rem;">No users found.</p>
+    {% endif %}
+    
+    <div class="actions">
+        <a href="{% url 'shyaka:admin_dashboard' %}">⬅ Back to Admin Dashboard</a>
+    </div>
+    
+    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #eee;">
+    
+    <div style="background: #f9f9f9; padding: 1rem; border-radius: 5px;">
+        <h3>Role Management Guide</h3>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Role Definitions</h4>
+        <dl style="margin: 0; color: #555;">
+            <dt style="font-weight: bold; margin-top: 0.5rem;">👤 User (Standard)</dt>
+            <dd style="margin-left: 1.5rem; margin-bottom: 0.5rem;">Default role. Can access personal dashboard, profile, and change password.</dd>
+            
+            <dt style="font-weight: bold; margin-top: 0.5rem;">👔 Staff</dt>
+            <dd style="margin-left: 1.5rem; margin-bottom: 0.5rem;">Elevated permissions for instructors and moderators. Can perform moderation tasks.</dd>
+            
+            <dt style="font-weight: bold; margin-top: 0.5rem;">🔑 Admin</dt>
+            <dd style="margin-left: 1.5rem; margin-bottom: 0.5rem;">Full system access. Can manage users, assign roles, and access all admin features.</dd>
+        </dl>
+        
+        <div style="margin-top: 1rem; padding: 0.75rem; background: #fff3cd; border-left: 3px solid #f39c12; color: #856404;">
+            <strong>⚠️ Warning:</strong> Assigning admin role grants full system access. Assign carefully and audit regularly.
+        </div>
+    </div>
+</div>
+{% endblock %}
+

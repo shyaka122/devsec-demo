@@ -1,0 +1,56 @@
+{% extends "shyaka/base.html" %}
+
+{% block title %}Admin Dashboard - Shyaka Auth{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h1>🔧 System Administration</h1>
+    <p style="text-align: center; color: #666;margin-bottom: 1.5rem;">Manage users and system settings</p>
+    
+    <div class="profile-info">
+        <h3>System Statistics</h3>
+        
+        <div class="profile-item">
+            <label>Total Users:</label>
+            <span><strong>{{ total_users }}</strong></span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Admin Users:</label>
+            <span><strong style="color: #e74c3c;">{{ admin_count }}</strong></span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Staff Users:</label>
+            <span><strong style="color: #f39c12;">{{ staff_count }}</strong></span>
+        </div>
+        
+        <div class="profile-item">
+            <label>Standard Users:</label>
+            <span><strong style="color: #3498db;">{{ total_users|add:"-"|add:admin_count|add:"-"|add:staff_count }}</strong></span>
+        </div>
+    </div>
+    
+    <div class="actions">
+        <a href="{% url 'shyaka:manage_users' %}">👥 Manage Users</a>
+        <a href="{% url 'shyaka:dashboard' %}">⬅ Back to Dashboard</a>
+    </div>
+    
+    <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #eee;">
+    
+    <div style="background: #f9f9f9; padding: 1rem; border-radius: 5px; margin-top: 1.5rem;">
+        <h3>Authorization Model</h3>
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Role Hierarchy</h4>
+        <ul style="margin: 0.5rem 0; margin-left: 1.5rem; color: #555;">
+            <li><strong>🔑 Admin:</strong> Full system access, user management, role assignment</li>
+            <li><strong>👔 Staff:</strong> Elevated permissions, moderation capabilities</li>
+            <li><strong>👤 User:</strong> Standard authenticated user permissions</li>
+            <li><strong>👁 Anonymous:</strong> Limited access, registration and login only</li>
+        </ul>
+        
+        <h4 style="margin-top: 1rem; margin-bottom: 0.5rem;">Access Control Strategy</h4>
+        <p style="color: #555; margin: 0;">All privileged views enforce role-based authorization using Django decorators and group membership. Unauthorized access attempts return HTTP 403 Forbidden with appropriate error messages.</p>
+    </div>
+</div>
+{% endblock %}
+
